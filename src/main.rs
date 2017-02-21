@@ -3,8 +3,9 @@
 
 #[derive(Debug)]
 enum Token {
-    Integer(u32),
+    Integer(i32),
     Plus,
+    Minus,
     EOF
 }
 
@@ -13,7 +14,6 @@ enum Token {
 struct Interpreter {
     text: Vec<char>,
     position: usize,
-    current_token: Token,
 }
 
 
@@ -22,44 +22,121 @@ impl Interpreter {
         Interpreter {
             text: source.chars().collect(),
             position: 0,
-            current_token: Token::EOF,
         }
     }
 
     ///
-    /// Tokenize the input.
-    /// It only accepts single digit integers and the '+' sign.
+    /// Advance our position index
     ///
-    fn get_next_token(&mut self) -> Token {
-        if self.position > self.text.len() - 1 {
-            return Token::EOF;
-        }
-
-        let token = match self.text[self.position] {
-            d @ '0' ... '9' => Token::Integer(d.to_digit(10).unwrap()),
-            '+' => Token::Plus,
-            c => panic!("Error: unexpected character: {}.", c),
-        };
+    fn advance(&mut self) {
         self.position += 1;
-        token
+    }
+
+    ///
+    /// Check for the end of out input text
+    ///
+    fn done(&self) -> bool {
+        self.text.len() == 0 || self.position > self.text.len() - 1
     }
 
     ///
     /// Evaluate expressions of the form:
     ///     Integer Plus Integer
+    ///     Integer Minus Integer
     ///
-    fn expression(&mut self) -> u32 {
+    fn expression(&mut self) -> i32 {
         use ::Token::*;
 
-        let lhs = self.get_next_token();
-        let op  = self.get_next_token();
-        let rhs = self.get_next_token();
-        match (lhs, op, rhs) {
-            (Integer(li), Plus, Integer(ri)) => li + ri,
-            (t1, t2, t3) => panic!("Error: invalid input string: {:?} {:?} {:?}.", t1, t2, t3),
+        let lhs = match self.get_next_token() {
+            Integer(i) => i,
+            t => panic!("Error: expected an integer and found a '{:?}'", t),
+        };
+        let op = match self.get_next_token() {
+            t @ Plus | t @ Minus => t,
+            t => panic!("Error: expected an operator and found a '{:?}'", t),
+        };
+        let rhs = match self.get_next_token() {
+            Integer(i) => i,
+            t => panic!("Error: expected an integer and found a '{:?}'", t),
+        };
+        match op {
+            Plus => lhs + rhs,
+            Minus => lhs - rhs,
+            _ => panic!("Should never reach here."),
         }
     }
 
+    ///
+    /// Tokenize the input.
+    /// It accepts integers and the '+' and '-' signs.
+    ///
+    fn get_next_token(&mut self) -> Token {
+        self.skip_ws();
+
+        if self.done() {
+            return Token::EOF;
+        }
+
+        let token = match self.text[self.position] {
+            '0' ... '9' => self.get_integer(),
+            '+' => Token::Plus,
+            '-' => Token::Minus,
+            c   => panic!("Error: unexpected character: {}.", c),
+        };
+        self.advance();
+        token
+    }
+
+    ///
+    /// Create a (potentially) multi-digit integer
+    ///
+    fn get_integer(&mut self) -> Token {
+        let mut number = self.text[self.position].to_string();
+        while let Some(c) = self.peek() {
+            match c {
+                '0' ... '9' => number.push(c),
+                _ => break,
+            }
+            self.advance();
+        }
+        Token::Integer(number.parse::<i32>().unwrap())
+    }
+
+    ///
+    /// Return the current character indexed by position. Note:
+    /// this returns an option since we might be done with the
+    /// source text.
+    ///
+    fn look(&self) -> Option<char> {
+        if !self.done() {
+            Some(self.text[self.position])
+        } else {
+            None
+        }
+    }
+
+    ///
+    /// Look at the next character. Note: this returns an option
+    /// since we could potentially look past the end of the source
+    /// text.
+    ///
+    fn peek(&self) -> Option<char> {
+        if !self.done() && self.position + 1 < self.text.len() {
+            Some(self.text[self.position + 1])
+        } else {
+            None
+        }
+    }
+
+    ///
+    /// Advance past any whitespace characters. This function does
+    /// not use look or peek so that I can avoid unwrapping the options.
+    ///
+    fn skip_ws(&mut self) {
+        while !self.done() && self.text[self.position].is_whitespace() {
+            self.advance();
+        }
+    }
 }
 
 macro_rules! prompt(

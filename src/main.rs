@@ -6,6 +6,8 @@ enum Token {
     Integer(i32),
     Plus,
     Minus,
+    Star,
+    Slash,
     EOF
 }
 
@@ -37,33 +39,6 @@ impl Interpreter {
     ///
     fn done(&self) -> bool {
         self.text.len() == 0 || self.position > self.text.len() - 1
-    }
-
-    ///
-    /// Evaluate expressions of the form:
-    ///     Integer Plus Integer
-    ///     Integer Minus Integer
-    ///
-    fn expression(&mut self) -> i32 {
-        use ::Token::*;
-
-        let lhs = match self.get_next_token() {
-            Integer(i) => i,
-            t => panic!("Error: expected an integer and found a '{:?}'", t),
-        };
-        let op = match self.get_next_token() {
-            t @ Plus | t @ Minus => t,
-            t => panic!("Error: expected an operator and found a '{:?}'", t),
-        };
-        let rhs = match self.get_next_token() {
-            Integer(i) => i,
-            t => panic!("Error: expected an integer and found a '{:?}'", t),
-        };
-        match op {
-            Plus => lhs + rhs,
-            Minus => lhs - rhs,
-            _ => panic!("Should never reach here."),
-        }
     }
 
     ///
@@ -116,6 +91,59 @@ impl Interpreter {
     }
 
     ///
+    /// Evaluate expressions of the form:
+    ///     Integer Plus Integer
+    ///     Integer Minus Integer
+    ///
+    fn parse_expression(&mut self) -> i32 {
+        use ::Token::*;
+
+        let mut result = self.parse_term();
+        while !self.done() {
+            match self.get_next_token() {
+                EOF => break,
+                Plus => result += self.parse_term(),
+                Minus => result -= self.parse_term(),
+                t => panic!("Error: expected an operator and found a '{:?}'", t),
+            };
+        }
+        result
+
+        // let lhs = match self.get_next_token() {
+        //     Integer(i) => i,
+        //     t => panic!("Error: expected an integer and found a '{:?}'", t),
+        // };
+        // let op = match self.get_next_token() {
+        //     Plus => Plus,
+        //     Minus => Minus,
+        //     Star => Star,
+        //     Slash => Slash,
+        //     t => panic!("Error: expected an operator and found a '{:?}'", t),
+        // };
+        // let rhs = match self.get_next_token() {
+        //     Integer(i) => i,
+        //     t => panic!("Error: expected an integer and found a '{:?}'", t),
+        // };
+        // match op {
+        //     Plus => lhs + rhs,
+        //     Minus => lhs - rhs,
+        //     Star => lhs * rhs,
+        //     Slash => lhs / rhs,
+        //     _ => panic!("Should never reach here."),
+        // }
+    }
+
+    ///
+    /// Parse a term, which can only be an integer so far.
+    ///
+    fn parse_term(&mut self) -> i32 {
+        match self.get_next_token() {
+            Token::Integer(i) => i,
+            t => panic!("Error: expected an integer and found a '{:?}'", t),
+        }
+    }
+
+    ///
     /// Look at the next character. Note: this returns an option
     /// since we could potentially look past the end of the source
     /// text.
@@ -153,7 +181,7 @@ fn main() {
     let stdin = stdin();
     for line in stdin.lock().lines() {
         let mut interpreter = Interpreter::new(line.unwrap());
-        let result = interpreter.expression();
+        let result = interpreter.parse_expression();
         println!("{}", result);
         prompt!("calc> ");
     }

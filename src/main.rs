@@ -4,166 +4,113 @@
 #[derive(Debug)]
 enum Token {
     Integer(i32),
-    Plus,
-    Minus,
     Star,
     Slash,
     EOF
 }
 
-
 #[derive(Debug)]
-struct Interpreter {
+struct Lexer {
     text: Vec<char>,
     position: usize,
+    current_char: Option<char>
+}
+
+impl Lexer {
+    fn new(source: String) -> Lexer {
+        let s = source.chars().collect::<Vec<char>>();
+        let c = if s.len() > 0 { Some(s[0]) } else { None };
+        Lexer {
+            text: s,
+            position: 0,
+            current_char: c
+        }
+    }
+
+    fn done(&self) -> bool {
+        self.position + 1 > self.text.len()
+    }
+
+
+    fn advance(&mut self) {
+        self.position += 1;
+        if self.position > self.text.len() - 1 {
+            self.current_char = None;
+        } else {
+            self.current_char = Some(self.text[self.position]);
+        }
+    }
+
+    fn skip_whitespace(&mut self) {
+        while !self.done() && self.current_char.unwrap().is_whitespace() {
+            self.advance();
+        }
+    }
+
+    fn scan_integer(&mut self) -> Token {
+        let mut integer = String::new();
+        while !self.done() && self.current_char.unwrap().is_digit(10) {
+            integer.push(self.current_char.unwrap());
+            self.advance();
+        }
+        Token::Integer(integer.parse::<i32>().unwrap())
+    }
+
+    fn get_next_token(&mut self) -> Token {
+        self.skip_whitespace();
+        if let Some(c) = self.current_char {
+            match c {
+                '0' ... '9' => self.scan_integer(),
+                '*' => { self.advance(); Token::Star },
+                '/' => { self.advance(); Token::Slash },
+                 c  => panic!("Error: unexpected character: {}.", c),
+            }
+        } else {
+            Token::EOF
+        }
+    }
 }
 
 
+#[derive(Debug)]
+struct Interpreter {
+    lexer: Lexer,
+    current_token: Token,
+}
+
 impl Interpreter {
     fn new(source: String) -> Interpreter {
+        let mut l = Lexer::new(source);
+        let t = l.get_next_token();
         Interpreter {
-            text: source.chars().collect(),
-            position: 0,
+            lexer: l,
+            current_token: t,
         }
     }
 
-    ///
-    /// Advance our position index
-    ///
-    fn advance(&mut self) {
-        self.position += 1;
+    fn eat(&mut self) {
+        self.current_token = self.lexer.get_next_token();
     }
 
-    ///
-    /// Check for the end of out input text
-    ///
-    fn done(&self) -> bool {
-        self.text.len() == 0 || self.position > self.text.len() - 1
-    }
-
-    ///
-    /// Tokenize the input.
-    /// It accepts integers and the '+' and '-' signs.
-    ///
-    fn get_next_token(&mut self) -> Token {
-        self.skip_ws();
-
-        if self.done() {
-            return Token::EOF;
+    fn parse_factor(&mut self) -> i32 {
+        match self.current_token {
+            Token::Integer(i) => { self.eat(); i },
+            ref t => panic!("Error: expected an integer and found a '{:?}'", t),
         }
-
-        let token = match self.text[self.position] {
-            '0' ... '9' => self.get_integer(),
-            '+' => Token::Plus,
-            '-' => Token::Minus,
-            c   => panic!("Error: unexpected character: {}.", c),
-        };
-        self.advance();
-        token
     }
 
-    ///
-    /// Create a (potentially) multi-digit integer
-    ///
-    fn get_integer(&mut self) -> Token {
-        let mut number = self.text[self.position].to_string();
-        while let Some(c) = self.peek() {
-            match c {
-                '0' ... '9' => number.push(c),
+    fn parse_expression(&mut self) -> i32 {
+        let mut result = self.parse_factor();
+
+        loop {
+            match self.current_token {
+                Token::Star  => { self.eat(); result *= self.parse_factor() },
+                Token::Slash => { self.eat(); result /= self.parse_factor() },
                 _ => break,
             }
-            self.advance();
         }
-        Token::Integer(number.parse::<i32>().unwrap())
-    }
 
-    ///
-    /// Return the current character indexed by position. Note:
-    /// this returns an option since we might be done with the
-    /// source text.
-    ///
-    fn look(&self) -> Option<char> {
-        if !self.done() {
-            Some(self.text[self.position])
-        } else {
-            None
-        }
-    }
-
-    ///
-    /// Evaluate expressions of the form:
-    ///     Integer Plus Integer
-    ///     Integer Minus Integer
-    ///
-    fn parse_expression(&mut self) -> i32 {
-        use ::Token::*;
-
-        let mut result = self.parse_term();
-        while !self.done() {
-            match self.get_next_token() {
-                EOF => break,
-                Plus => result += self.parse_term(),
-                Minus => result -= self.parse_term(),
-                t => panic!("Error: expected an operator and found a '{:?}'", t),
-            };
-        }
         result
-
-        // let lhs = match self.get_next_token() {
-        //     Integer(i) => i,
-        //     t => panic!("Error: expected an integer and found a '{:?}'", t),
-        // };
-        // let op = match self.get_next_token() {
-        //     Plus => Plus,
-        //     Minus => Minus,
-        //     Star => Star,
-        //     Slash => Slash,
-        //     t => panic!("Error: expected an operator and found a '{:?}'", t),
-        // };
-        // let rhs = match self.get_next_token() {
-        //     Integer(i) => i,
-        //     t => panic!("Error: expected an integer and found a '{:?}'", t),
-        // };
-        // match op {
-        //     Plus => lhs + rhs,
-        //     Minus => lhs - rhs,
-        //     Star => lhs * rhs,
-        //     Slash => lhs / rhs,
-        //     _ => panic!("Should never reach here."),
-        // }
-    }
-
-    ///
-    /// Parse a term, which can only be an integer so far.
-    ///
-    fn parse_term(&mut self) -> i32 {
-        match self.get_next_token() {
-            Token::Integer(i) => i,
-            t => panic!("Error: expected an integer and found a '{:?}'", t),
-        }
-    }
-
-    ///
-    /// Look at the next character. Note: this returns an option
-    /// since we could potentially look past the end of the source
-    /// text.
-    ///
-    fn peek(&self) -> Option<char> {
-        if !self.done() && self.position + 1 < self.text.len() {
-            Some(self.text[self.position + 1])
-        } else {
-            None
-        }
-    }
-
-    ///
-    /// Advance past any whitespace characters. This function does
-    /// not use look or peek so that I can avoid unwrapping the options.
-    ///
-    fn skip_ws(&mut self) {
-        while !self.done() && self.text[self.position].is_whitespace() {
-            self.advance();
-        }
     }
 }
 

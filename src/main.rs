@@ -1,9 +1,10 @@
 
-#[derive(Debug, PartialEq)]
+#[derive(Debug)]
 enum Token {
     Integer(i32),
     Star, Slash,
-    Plus, Minus
+    Plus, Minus,
+    LParen, RParen
 }
 
 #[derive(Debug)]
@@ -71,6 +72,8 @@ impl Lexer {
             '-'         => Token::Minus,
             '*'         => Token::Star,
             '/'         => Token::Slash,
+            '('         => Token::LParen,
+            ')'         => Token::RParen,
              c          => panic!("Error: unexpected character: '{}'.", c),
         };
         self.advance();
@@ -102,6 +105,14 @@ impl Interpreter {
     fn factor(&mut self) -> i32 {
         let result = match self.current_token {
             Some(Token::Integer(i)) => i,
+            Some(Token::LParen) => {
+                self.advance();
+                let paren_result = self.expression();
+                match self.current_token {
+                    Some(Token::RParen) => paren_result,
+                    ref t => panic!("Error: expected an RParen found a {:?}", t),
+                }
+            }
             ref t => panic!("Error: expected an integer and found a '{:?}'.", t),
         };
         self.advance();

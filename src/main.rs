@@ -1,5 +1,5 @@
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 enum Token {
     Integer(i32),
     Star, Slash,
@@ -81,18 +81,23 @@ impl Lexer {
     }
 }
 
+#[derive(Debug)]
+enum AST {
+    BinOp { lhs: Box<AST>, op: Token, rhs: Box<AST> },
+    Num (i32),
+}
 
 #[derive(Debug)]
-struct Interpreter {
+struct Parser {
     lexer: Lexer,
     current_token: Option<Token>,
 }
 
-impl Interpreter {
-    fn new(source: String) -> Interpreter {
+impl Parser {
+    fn new(source: String) -> Parser {
         let mut l = Lexer::new(source);
         let t = l.get_next_token();
-        Interpreter {
+        Parser {
             lexer: l,
             current_token: t,
         }
@@ -102,49 +107,89 @@ impl Interpreter {
         self.current_token = self.lexer.get_next_token();
     }
 
-    fn factor(&mut self) -> i32 {
-        let result = match self.current_token {
-            Some(Token::Integer(i)) => i,
+    fn factor(&mut self) -> AST {
+        let ast = match self.current_token {
+            Some(Token::Integer(i)) => AST::Num(i),
             Some(Token::LParen) => {
                 self.advance();
-                let paren_result = self.expression();
+                let paren_ast = self.expression();
                 match self.current_token {
-                    Some(Token::RParen) => paren_result,
+                    Some(Token::RParen) => paren_ast,
                     ref t => panic!("Error: expected an RParen found a {:?}", t),
                 }
             }
             ref t => panic!("Error: expected an integer and found a '{:?}'.", t),
         };
         self.advance();
-        result
+        ast
     }
 
-    fn term(&mut self) -> i32 {
-        let mut result = self.factor();
+    fn term(&mut self) -> AST {
+        let mut ast = self.factor();
 
         loop {
             match self.current_token {
-                Some(Token::Star)  => { self.advance(); result *= self.factor(); },
-                Some(Token::Slash) => { self.advance(); result /= self.factor(); },
+                Some(Token::Star)  => (),
+                Some(Token::Slash) => (),
                 _ => break,
             }
+            let token = self.current_token.clone().unwrap();
+            self.advance();
+            ast = AST::BinOp {
+                lhs: Box::new(ast), op: token, rhs: Box::new(self.factor())
+            };
         }
-        result
+        ast
     }
 
-    fn expression(&mut self) -> i32 {
-        let mut result = self.term();
+    fn expression(&mut self) -> AST {
+        let mut ast = self.term();
 
         loop {
             match self.current_token {
-                Some(Token::Plus)  => { self.advance(); result += self.term() },
-                Some(Token::Minus) => { self.advance(); result -= self.term() },
+                Some(Token::Plus)  => (),
+                Some(Token::Minus) => (),
                 _ => break,
             }
+            let token = self.current_token.clone().unwrap();
+            self.advance();
+            ast = AST::BinOp {
+                lhs: Box::new(ast), op: token, rhs: Box::new(self.term())
+            };
         }
-        result
+        ast
     }
 }
+
+#[derive(Debug)]
+struct Interpreter {
+    parser: Parser
+}
+
+impl Interpreter {
+    fn new(source: String) -> Interpreter {
+        Interpreter { parser: Parser::new(source) }
+    }
+
+    fn visit(&self, ast: AST) -> i32 {
+        match ast {
+            AST::BinOp{lhs, op, rhs} => match op {
+                Token::Plus  => self.visit(*lhs) + self.visit(*rhs),
+                Token::Minus => self.visit(*lhs) - self.visit(*rhs),
+                Token::Star  => self.visit(*lhs) * self.visit(*rhs),
+                Token::Slash => self.visit(*lhs) / self.visit(*rhs),
+                _ => panic!("Error: expected arithmetic operator and found '{:?}'.", op),
+            },
+            AST::Num(i) => i,
+        }
+    }
+
+    fn interpret(&mut self) -> i32 {
+        let ast = self.parser.expression();
+        self.visit(ast)
+    }
+}
+
 
 macro_rules! prompt(
     ($($arg:tt)*) => { {
@@ -160,8 +205,8 @@ fn main() {
     let stdin = stdin();
     for line in stdin.lock().lines() {
         let mut interpreter = Interpreter::new(line.unwrap());
-        let result = interpreter.expression();
-        println!("{}", result);
+        let result = interpreter.interpret();
+        println!("{:#?}", result);
         prompt!("calc> ");
     }
 }

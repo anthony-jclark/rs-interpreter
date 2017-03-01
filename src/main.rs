@@ -1,4 +1,5 @@
-
+// 5 - - - + - (3 + 4) - +2
+// (1 + (3+4) - 1 - 14) * 7- +2
 #[derive(Debug, Clone)]
 enum Token {
     Integer(i32),
@@ -84,8 +85,13 @@ impl Lexer {
 #[derive(Debug)]
 enum AST {
     BinOp { lhs: Box<AST>, op: Token, rhs: Box<AST> },
+    UnaryOp { op: Token, rhs: Box<AST> },
     Num (i32),
 }
+
+/// expression : term ((Plus | Minus) term)*
+/// term       : factor ((Star | Slash) factor)*
+/// factor     : (Plus | Minus) factor | Integer | LParen expression RParen
 
 #[derive(Debug)]
 struct Parser {
@@ -107,23 +113,38 @@ impl Parser {
         self.current_token = self.lexer.get_next_token();
     }
 
+    ///
+    /// factor : (Plus | Minus) factor | Integer | LParen expression RParen
+    ///
     fn factor(&mut self) -> AST {
-        let ast = match self.current_token {
-            Some(Token::Integer(i)) => AST::Num(i),
+        match self.current_token {
+            Some(Token::Plus) | Some(Token::Minus) => {
+                let token = self.current_token.clone().unwrap();
+                self.advance();
+                AST::UnaryOp{op: token, rhs: Box::new(self.factor())}
+            },
+
+            Some(Token::Integer(i)) => {
+                self.advance();
+                AST::Num(i)
+            },
+
             Some(Token::LParen) => {
                 self.advance();
                 let paren_ast = self.expression();
                 match self.current_token {
-                    Some(Token::RParen) => paren_ast,
+                    Some(Token::RParen) => { self.advance(); paren_ast },
                     ref t => panic!("Error: expected an RParen found a {:?}", t),
                 }
             }
+
             ref t => panic!("Error: expected an integer and found a '{:?}'.", t),
-        };
-        self.advance();
-        ast
+        }
     }
 
+    ///
+    /// factor ((Star | Slash) factor)*
+    ///
     fn term(&mut self) -> AST {
         let mut ast = self.factor();
 
@@ -142,6 +163,9 @@ impl Parser {
         ast
     }
 
+    ///
+    /// term ((Plus | Minus) term)*
+    ///
     fn expression(&mut self) -> AST {
         let mut ast = self.term();
 
@@ -179,6 +203,11 @@ impl Interpreter {
                 Token::Star  => self.visit(*lhs) * self.visit(*rhs),
                 Token::Slash => self.visit(*lhs) / self.visit(*rhs),
                 _ => panic!("Error: expected arithmetic operator and found '{:?}'.", op),
+            },
+            AST::UnaryOp{op, rhs} => match op {
+                Token::Plus  => self.visit(*rhs),
+                Token::Minus => -self.visit(*rhs),
+                _ => panic!("Error: expected a '+' or '-' and found '{:?}'.", op),
             },
             AST::Num(i) => i,
         }

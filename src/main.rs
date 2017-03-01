@@ -1,11 +1,34 @@
-// 5 - - - + - (3 + 4) - +2
-// (1 + (3+4) - 1 - 14) * 7- +2
+///
+/// program : compound_statement Dot
+/// compound_statement : Begin statement_list End
+/// statement_list : statement
+///                | statement Semi statement_list
+/// statement : compound_statement
+///           | assignment_statement
+///           | empty
+/// assignment_statement : variable Assign expression
+/// variable : Id
+/// empty :
+///
+/// expression : term ((Plus | Minus) term)*
+/// term       : factor ((Star | Slash) factor)*
+/// factor     : (Plus | Minus) factor
+///            | Integer
+///            | LParen expression RParen
+///            | variable
+///
+
+use std::collections::HashMap;
+
 #[derive(Debug, Clone)]
 enum Token {
     Integer(i32),
     Star, Slash,
     Plus, Minus,
-    LParen, RParen
+    LParen, RParen,
+    Begin, End,
+    Dot, Semi, Assign,
+    Id(String),
 }
 
 #[derive(Debug)]
@@ -56,26 +79,57 @@ impl Lexer {
         }
     }
 
-    fn scan_integer(&mut self) -> Token {
+    fn integer(&mut self) -> Token {
         let start = self.position;
         while self.next_char_is(|c| c.is_digit(10)) {
             self.advance();
         }
+
         Token::Integer(self.string(start, self.position + 1).parse::<i32>().unwrap())
+    }
+
+    fn word(&mut self) -> Token {
+        use std::ascii::AsciiExt;
+
+        let start = self.position;
+        while self.next_char_is(|c| c.is_alphanumeric() && c.is_ascii()) {
+            self.advance();
+        }
+
+        let word = self.string(start, self.position + 1);
+        match word.as_ref() {
+            "BEGIN" => Token::Begin,
+            "END"   => Token::End,
+            _       => Token::Id(word),
+        }
     }
 
     fn get_next_token(&mut self) -> Option<Token> {
         self.skip_whitespace();
         if self.done() { return None; }
         let token = match self.char().unwrap() {
-            '0' ... '9' => self.scan_integer(),
-            '+'         => Token::Plus,
-            '-'         => Token::Minus,
-            '*'         => Token::Star,
-            '/'         => Token::Slash,
-            '('         => Token::LParen,
-            ')'         => Token::RParen,
-             c          => panic!("Error: unexpected character: '{}'.", c),
+            '+' => Token::Plus,
+            '-' => Token::Minus,
+            '*' => Token::Star,
+            '/' => Token::Slash,
+            '(' => Token::LParen,
+            ')' => Token::RParen,
+            '.' => Token::Dot,
+            ';' => Token::Semi,
+
+            ':' => {
+                self.advance();
+                match self.char() {
+                    Some('=') => Token::Assign,
+                    c => panic!("Error: expected '=' after ':' but found {:?}", c),
+                }
+            }
+
+            '0' ... '9' => self.integer(),
+
+            'a' ... 'z' | 'A' ... 'Z' => self.word(),
+
+             c => panic!("Error: unexpected character: '{}'.", c),
         };
         self.advance();
         Some(token)
@@ -84,14 +138,14 @@ impl Lexer {
 
 #[derive(Debug)]
 enum AST {
+    Compound (Vec<Box<AST>>),
+    Assign { lhs: Box<AST>, rhs: Box<AST> },
+    Var (String),
+    NoOp,
     BinOp { lhs: Box<AST>, op: Token, rhs: Box<AST> },
     UnaryOp { op: Token, rhs: Box<AST> },
     Num (i32),
 }
-
-/// expression : term ((Plus | Minus) term)*
-/// term       : factor ((Star | Slash) factor)*
-/// factor     : (Plus | Minus) factor | Integer | LParen expression RParen
 
 #[derive(Debug)]
 struct Parser {
@@ -113,38 +167,123 @@ impl Parser {
         self.current_token = self.lexer.get_next_token();
     }
 
-    ///
-    /// factor : (Plus | Minus) factor | Integer | LParen expression RParen
-    ///
+    fn parse(&mut self) -> AST {
+        let ast = self.program();
+        match self.current_token {
+            None => (),
+            _ => panic!("Error: tokens remain after parsing."),
+        }
+        ast
+    }
+
+    /// program : compound_statement Dot
+    fn program(&mut self) -> AST {
+        let ast = self.compound_statement();
+        match self.current_token {
+            Some(Token::Dot) => self.advance(),
+            ref t => panic!("Error: expected a Dot found a {:?}", t),
+        };
+        ast
+    }
+
+    /// compound_statement : Begin statement_list End
+    fn compound_statement(&mut self) -> AST {
+        match self.current_token {
+            Some(Token::Begin) => self.advance(),
+            ref t => panic!("Error: expected a Begin found a {:?}", t),
+        };
+        let ast = AST::Compound(self.statement_list());
+        match self.current_token {
+            Some(Token::End) => self.advance(),
+            ref t => panic!("Error: expected a End found a {:?}", t),
+        };
+        ast
+    }
+
+    /// statement_list : statement (Semi statement_list)*
+    fn statement_list(&mut self) -> Vec<Box<AST>> {
+        let mut stmts = vec![Box::new(self.statement())];
+        loop {
+            match self.current_token {
+                Some(Token::Semi) => {
+                    self.advance();
+                    stmts.push(Box::new(self.statement()))
+                }
+                _ => break,
+            }
+        }
+        stmts
+    }
+
+    /// statement : compound_statement
+    ///           | assignment_statement
+    ///           | empty
+    fn statement(&mut self) -> AST {
+        match self.current_token {
+            Some(Token::Begin) => self.compound_statement(),
+            Some(Token::Id(_)) => self.assignment_statement(),
+            _ => self.empty(),
+        }
+    }
+
+    /// assignment_statement : variable Assign expression
+    fn assignment_statement(&mut self) -> AST {
+        let lhs = self.variable();
+        match self.current_token {
+            Some(Token::Assign) => self.advance(),
+            ref t => panic!("Error: expected an Assign found a {:?}", t),
+        };
+        AST::Assign{lhs: Box::new(lhs), rhs: Box::new(self.expression())}
+    }
+
+    /// variable : Id
+    fn variable(&mut self) -> AST {
+        let ast = match self.current_token {
+            Some(Token::Id(ref s)) => AST::Var(s.clone()),
+            ref t => panic!("Error: expected a Variable found a {:?}", t),
+        };
+        self.advance();
+        ast
+    }
+
+    /// empty :
+    fn empty(&mut self) -> AST {
+        AST::NoOp
+    }
+
+    /// factor : (Plus | Minus) factor
+    ///        | Integer
+    ///        | LParen expression RParen
+    ///        | variable
     fn factor(&mut self) -> AST {
         match self.current_token {
             Some(Token::Plus) | Some(Token::Minus) => {
                 let token = self.current_token.clone().unwrap();
                 self.advance();
                 AST::UnaryOp{op: token, rhs: Box::new(self.factor())}
-            },
+            }
 
             Some(Token::Integer(i)) => {
                 self.advance();
                 AST::Num(i)
-            },
+            }
 
             Some(Token::LParen) => {
                 self.advance();
                 let paren_ast = self.expression();
                 match self.current_token {
-                    Some(Token::RParen) => { self.advance(); paren_ast },
+                    Some(Token::RParen) => { self.advance(); paren_ast }
                     ref t => panic!("Error: expected an RParen found a {:?}", t),
                 }
             }
+
+            Some(Token::Id(_)) => self.variable(),
 
             ref t => panic!("Error: expected an integer and found a '{:?}'.", t),
         }
     }
 
-    ///
     /// factor ((Star | Slash) factor)*
-    ///
     fn term(&mut self) -> AST {
         let mut ast = self.factor();
 
@@ -163,9 +302,7 @@ impl Parser {
         ast
     }
 
-    ///
     /// term ((Plus | Minus) term)*
-    ///
     fn expression(&mut self) -> AST {
         let mut ast = self.term();
 
@@ -187,38 +324,88 @@ impl Parser {
 
 #[derive(Debug)]
 struct Interpreter {
-    parser: Parser
+    parser: Parser,
+    global_scope: HashMap<String, i32>,
 }
 
 impl Interpreter {
     fn new(source: String) -> Interpreter {
-        Interpreter { parser: Parser::new(source) }
-    }
-
-    fn visit(&self, ast: AST) -> i32 {
-        match ast {
-            AST::BinOp{lhs, op, rhs} => match op {
-                Token::Plus  => self.visit(*lhs) + self.visit(*rhs),
-                Token::Minus => self.visit(*lhs) - self.visit(*rhs),
-                Token::Star  => self.visit(*lhs) * self.visit(*rhs),
-                Token::Slash => self.visit(*lhs) / self.visit(*rhs),
-                _ => panic!("Error: expected arithmetic operator and found '{:?}'.", op),
-            },
-            AST::UnaryOp{op, rhs} => match op {
-                Token::Plus  => self.visit(*rhs),
-                Token::Minus => -self.visit(*rhs),
-                _ => panic!("Error: expected a '+' or '-' and found '{:?}'.", op),
-            },
-            AST::Num(i) => i,
+        Interpreter {
+            parser: Parser::new(source),
+            global_scope: HashMap::new(),
         }
     }
 
-    fn interpret(&mut self) -> i32 {
-        let ast = self.parser.expression();
-        self.visit(ast)
+    fn visit(&mut self, ast: AST) {
+        match ast {
+            AST::Compound(children) => {
+                for child in children {
+                    self.visit(*child);
+                }
+            }
+            AST::Assign{lhs, rhs} => match *lhs {
+                AST::Var(s) => {
+                    let val = self.evaluate(*rhs);
+                    self.global_scope.insert(s, val);
+                }
+                ref t => panic!("Error: expected variable and found {:?}", t),
+            },
+            AST::NoOp => (),
+
+            ref t => panic!("Error: expected statement and found {:?}", t),
+        }
+    }
+
+    fn evaluate(&self, ast: AST) -> i32 {
+        match ast {
+            AST::BinOp{lhs, op, rhs} => match op {
+                Token::Plus  => self.evaluate(*lhs) + self.evaluate(*rhs),
+                Token::Minus => self.evaluate(*lhs) - self.evaluate(*rhs),
+                Token::Star  => self.evaluate(*lhs) * self.evaluate(*rhs),
+                Token::Slash => self.evaluate(*lhs) / self.evaluate(*rhs),
+                _ => panic!("Error: expected arithmetic operator and found '{:?}'.", op),
+            },
+            AST::UnaryOp{op, rhs} => match op {
+                Token::Plus  => self.evaluate(*rhs),
+                Token::Minus => -self.evaluate(*rhs),
+                _ => panic!("Error: expected a '+' or '-' and found '{:?}'.", op),
+            },
+            AST::Var(name) => match self.global_scope.get(&name) {
+                Some(val) => *val,
+                None => panic!("Error: the variable {} is undefined", name),
+            },
+            AST::Num(i) => i,
+            ref t => panic!("Error: expected an evaluatable expression found {:?}", t),
+        }
+    }
+
+    fn interpret(&mut self) {
+        let ast = self.parser.parse();
+        self.visit(ast);
+        println!("{:#?}", self.global_scope);
     }
 }
 
+fn main() {
+    use std::env;
+
+    let args: Vec<String> = env::args().collect();
+    match args.len() {
+        1 => run_prompt(),
+        2 => run_file(&args[1]),
+        _ => println!("Usage: lox [script]")
+    }
+}
+
+fn run_file(path: &String) {
+    use std::fs::File;
+    use std::io::Read;
+
+    let mut file = File::open(path).expect("Could not open file");
+    let mut file_string = String::new();
+    file.read_to_string(&mut file_string).expect("Could not read from file");
+    run(file_string);
+}
 
 macro_rules! prompt(
     ($($arg:tt)*) => { {
@@ -227,15 +414,19 @@ macro_rules! prompt(
     } }
 );
 
-fn main() {
+fn run_prompt() {
     use std::io::{BufRead, stdin, stdout, Write};
 
     prompt!("calc> ");
     let stdin = stdin();
     for line in stdin.lock().lines() {
         let mut interpreter = Interpreter::new(line.unwrap());
-        let result = interpreter.interpret();
-        println!("{:#?}", result);
+        interpreter.interpret();
         prompt!("calc> ");
     }
+}
+
+fn run(source: String) {
+    let mut interpreter = Interpreter::new(source);
+    interpreter.interpret();
 }

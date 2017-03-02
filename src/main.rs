@@ -1,33 +1,43 @@
 ///
-/// program : compound_statement Dot
-/// compound_statement : Begin statement_list End
-/// statement_list : statement
-///                | statement Semi statement_list
+/// program : PROGRAM variable SEMI block DOT
+/// block : declarations compound_statement
+/// declarations : VAR (variable_declarations SEMI)+
+///              | empty
+/// variable_declarations : ID (COMMA ID)* COLON type_specifier
+/// type_specifier : INTEGER | REAL
+/// compound_statement : BEGIN statements END
+/// statements : statement (SEMI statements)*
 /// statement : compound_statement
 ///           | assignment_statement
 ///           | empty
-/// assignment_statement : variable Assign expression
-/// variable : Id
+/// assignment_statement : variable ASSIGN expression
+/// variable : ID
 /// empty :
 ///
-/// expression : term ((Plus | Minus) term)*
-/// term       : factor ((Star | Slash) factor)*
-/// factor     : (Plus | Minus) factor
-///            | Integer
-///            | LParen expression RParen
-///            | variable
+/// expression : term ((PLUS | MINUS) term)*
+/// term : factor ((STAR | DIV | SLASH) factor)*
+/// factor : (PLUS | MINUS) factor
+///        | INTEGERLITERAL
+///        | REALLITERAL
+///        | LPAREN expression RPAREN
+///        | variable
 ///
 
 use std::collections::HashMap;
 
 #[derive(Debug, Clone)]
 enum Token {
-    Integer(i32),
-    Star, Slash,
-    Plus, Minus,
+    // Arithmetic
+    Plus, Minus, Star, Slash, Div,
+    // Grouping
     LParen, RParen,
-    Begin, End,
-    Dot, Semi, Assign,
+    // Keywords
+    Begin, End, Program, Var, Integer, Real,
+    // Punctuation
+    Dot, Semi, Assign, Colon, Comma,
+    // Literals
+    IntegerLiteral(i32), RealLiteral(f64),
+    // Identifiers
     Id(String),
 }
 
@@ -79,13 +89,30 @@ impl Lexer {
         }
     }
 
-    fn integer(&mut self) -> Token {
+    fn skip_comment(&mut self) {
+        while !self.done() && self.source[self.position] != '}' {
+            self.advance();
+        }
+        self.advance();
+    }
+
+    fn number(&mut self) -> Token {
         let start = self.position;
         while self.next_char_is(|c| c.is_digit(10)) {
             self.advance();
         }
+        if self.next_char_is(|c| c == '.') {
+            self.advance();
+            while self.next_char_is(|c| c.is_digit(10)) {
+                self.advance();
+            }
+            Token::RealLiteral(
+                self.string(start, self.position + 1).parse::<f64>().unwrap())
+        } else {
+            Token::IntegerLiteral(
+                self.string(start, self.position + 1).parse::<i32>().unwrap())
+        }
 
-        Token::Integer(self.string(start, self.position + 1).parse::<i32>().unwrap())
     }
 
     fn word(&mut self) -> Token {
@@ -96,17 +123,29 @@ impl Lexer {
             self.advance();
         }
 
-        let word = self.string(start, self.position + 1);
+        let word = self.string(start, self.position + 1).to_lowercase();
         match word.as_ref() {
-            "BEGIN" => Token::Begin,
-            "END"   => Token::End,
-            _       => Token::Id(word),
+            "begin"   => Token::Begin,
+            "div"     => Token::Div,
+            "end"     => Token::End,
+            "integer" => Token::Integer,
+            "program" => Token::Program,
+            "real"    => Token::Real,
+            "var"     => Token::Var,
+            _         => Token::Id(word),
         }
     }
 
     fn get_next_token(&mut self) -> Option<Token> {
         self.skip_whitespace();
         if self.done() { return None; }
+
+        // Skip comments
+        while let Some('{') = self.char() {
+            self.skip_comment();
+            self.skip_whitespace();
+        }
+
         let token = match self.char().unwrap() {
             '+' => Token::Plus,
             '-' => Token::Minus,
@@ -116,18 +155,14 @@ impl Lexer {
             ')' => Token::RParen,
             '.' => Token::Dot,
             ';' => Token::Semi,
+            ',' => Token::Comma,
 
-            ':' => {
-                self.advance();
-                match self.char() {
-                    Some('=') => Token::Assign,
-                    c => panic!("Error: expected '=' after ':' but found {:?}", c),
-                }
-            }
+            ':' if self.next_char_is(|c| c == '=') => { self.advance(); Token::Assign }
+            ':' => Token::Colon,
 
-            '0' ... '9' => self.integer(),
+            '0'...'9' => self.number(),
 
-            'a' ... 'z' | 'A' ... 'Z' => self.word(),
+            'a'...'z' | 'A'...'Z' | '_' => self.word(),
 
              c => panic!("Error: unexpected character: '{}'.", c),
         };
@@ -136,11 +171,41 @@ impl Lexer {
     }
 }
 
+
+/// Program : PROGRAM variable SEMI block DOT
+/// Block : declarations compound_statement
+/// Declarations : VAR (variable_declarations SEMI)+
+///              | empty
+/// Variable_declarations : ID (COMMA ID)* COLON type_specifier
+/// Type_specifier : INTEGER | REAL
+/// Compound_statement : BEGIN statements END
+/// Statements : statement (SEMI statements)*
+/// Statement : compound_statement
+///           | assignment_statement
+///           | empty
+/// Assignment_statement : variable ASSIGN expression
+/// Variable : ID
+/// Empty :
+///
+/// Expression : term ((PLUS | MINUS) term)*
+/// Term : factor ((STAR | DIV | SLASH) factor)*
+/// Factor : (PLUS | MINUS) factor
+///        | INTEGERLITERAL
+///        | REALLITERAL
+///        | LPAREN expression RPAREN
+///        | variable
+
 #[derive(Debug)]
 enum AST {
-    Compound (Vec<Box<AST>>),
+    Program { variable: Box<AST>, block: Box<AST> },
+    Block { declarations: Box<AST>, compound_statement: Box<AST> },
+    Declarations (Vec<Box<AST>>);
+    VariableDeclarations { variables: Vec<Box<AST>>, type_specifier: Box<AST> },
+    TypeSpecifier (Token),
+    CompoundStatement (Box<AST>),
+    Statements (Vec<Box<AST>>)
     Assign { lhs: Box<AST>, rhs: Box<AST> },
-    Var (String),
+    Variable (String),
     NoOp,
     BinOp { lhs: Box<AST>, op: Token, rhs: Box<AST> },
     UnaryOp { op: Token, rhs: Box<AST> },
@@ -176,7 +241,7 @@ impl Parser {
         ast
     }
 
-    /// program : compound_statement Dot
+    /// program : PROGRAM variable SEMI block DOT
     fn program(&mut self) -> AST {
         let ast = self.compound_statement();
         match self.current_token {
@@ -186,7 +251,45 @@ impl Parser {
         ast
     }
 
-    /// compound_statement : Begin statement_list End
+    /// block : declarations compound_statement
+    fn block(&mut self) -> AST {
+        AST::Block {
+            declarations: self.declarations(),
+            compound_statement: Box::new(self.compound_statement()),
+        }
+    }
+
+    /// declarations : VAR (variable_declarations SEMI)+
+    ///              | empty
+    fn declarations(&mut self) -> Vec<Box<AST>> {
+        let mut declarations: Vec<Box<AST>> = Vec::new();
+        match self.current_token {
+            Some(Token::Var) => {
+                self.advance();
+                while let Some(Token::Id(_)) = self.current_token {
+                    declarations.push(Box::new(self.variable_declaration()));
+                    match self.current_token {
+                        Some(Token::Semi) => self.advance(),
+                        ref t => panic!("Error: expected a Semi found a {:?}", t),
+                    }
+                }
+            }
+            _ => (),
+        };
+        declarations
+    }
+
+    /// variable_declarations : ID (COMMA ID)* COLON type_specifier
+    fn variable_declarations(&mut self) -> AST {
+        unimplemented!();
+    }
+
+    /// type_specifier : INTEGER | REAL
+    fn type_specifier(&mut self) -> AST {
+        unimplemented!();
+    }
+
+    /// compound_statement : BEGIN statements END
     fn compound_statement(&mut self) -> AST {
         match self.current_token {
             Some(Token::Begin) => self.advance(),
@@ -200,8 +303,8 @@ impl Parser {
         ast
     }
 
-    /// statement_list : statement (Semi statement_list)*
-    fn statement_list(&mut self) -> Vec<Box<AST>> {
+    /// statements : statement (SEMI statements)*
+    fn statements(&mut self) -> Vec<Box<AST>> {
         let mut stmts = vec![Box::new(self.statement())];
         loop {
             match self.current_token {
@@ -226,7 +329,7 @@ impl Parser {
         }
     }
 
-    /// assignment_statement : variable Assign expression
+    /// assignment_statement : variable ASSIGN expression
     fn assignment_statement(&mut self) -> AST {
         let lhs = self.variable();
         match self.current_token {
@@ -236,10 +339,10 @@ impl Parser {
         AST::Assign{lhs: Box::new(lhs), rhs: Box::new(self.expression())}
     }
 
-    /// variable : Id
+    /// variable : ID
     fn variable(&mut self) -> AST {
         let ast = match self.current_token {
-            Some(Token::Id(ref s)) => AST::Var(s.clone()),
+            Some(Token::Id(ref s)) => AST::Variable(s.clone()),
             ref t => panic!("Error: expected a Variable found a {:?}", t),
         };
         self.advance();
@@ -251,9 +354,48 @@ impl Parser {
         AST::NoOp
     }
 
-    /// factor : (Plus | Minus) factor
-    ///        | Integer
-    ///        | LParen expression RParen
+    /// expression : term ((PLUS | MINUS) term)*
+    fn expression(&mut self) -> AST {
+        let mut ast = self.term();
+
+        loop {
+            match self.current_token {
+                Some(Token::Plus)  => (),
+                Some(Token::Minus) => (),
+                _ => break,
+            }
+            let token = self.current_token.clone().unwrap();
+            self.advance();
+            ast = AST::BinOp {
+                lhs: Box::new(ast), op: token, rhs: Box::new(self.term())
+            };
+        }
+        ast
+    }
+
+    /// term : factor ((STAR | DIV | SLASH) factor)*
+    fn term(&mut self) -> AST {
+        let mut ast = self.factor();
+
+        loop {
+            match self.current_token {
+                Some(Token::Star)  => (),
+                Some(Token::Div) => (),
+                _ => break,
+            }
+            let token = self.current_token.clone().unwrap();
+            self.advance();
+            ast = AST::BinOp {
+                lhs: Box::new(ast), op: token, rhs: Box::new(self.factor())
+            };
+        }
+        ast
+    }
+
+    /// factor : (PLUS | MINUS) factor
+    ///        | INTEGERLITERAL
+    ///        | REALLITERAL
+    ///        | LPAREN expression RPAREN
     ///        | variable
     fn factor(&mut self) -> AST {
         match self.current_token {
@@ -263,7 +405,7 @@ impl Parser {
                 AST::UnaryOp{op: token, rhs: Box::new(self.factor())}
             }
 
-            Some(Token::Integer(i)) => {
+            Some(Token::IntegerLiteral(i)) => {
                 self.advance();
                 AST::Num(i)
             }
@@ -281,44 +423,6 @@ impl Parser {
 
             ref t => panic!("Error: expected an integer and found a '{:?}'.", t),
         }
-    }
-
-    /// factor ((Star | Slash) factor)*
-    fn term(&mut self) -> AST {
-        let mut ast = self.factor();
-
-        loop {
-            match self.current_token {
-                Some(Token::Star)  => (),
-                Some(Token::Slash) => (),
-                _ => break,
-            }
-            let token = self.current_token.clone().unwrap();
-            self.advance();
-            ast = AST::BinOp {
-                lhs: Box::new(ast), op: token, rhs: Box::new(self.factor())
-            };
-        }
-        ast
-    }
-
-    /// term ((Plus | Minus) term)*
-    fn expression(&mut self) -> AST {
-        let mut ast = self.term();
-
-        loop {
-            match self.current_token {
-                Some(Token::Plus)  => (),
-                Some(Token::Minus) => (),
-                _ => break,
-            }
-            let token = self.current_token.clone().unwrap();
-            self.advance();
-            ast = AST::BinOp {
-                lhs: Box::new(ast), op: token, rhs: Box::new(self.term())
-            };
-        }
-        ast
     }
 }
 
@@ -344,7 +448,7 @@ impl Interpreter {
                 }
             }
             AST::Assign{lhs, rhs} => match *lhs {
-                AST::Var(s) => {
+                AST::Variable(s) => {
                     let val = self.evaluate(*rhs);
                     self.global_scope.insert(s, val);
                 }
@@ -362,7 +466,7 @@ impl Interpreter {
                 Token::Plus  => self.evaluate(*lhs) + self.evaluate(*rhs),
                 Token::Minus => self.evaluate(*lhs) - self.evaluate(*rhs),
                 Token::Star  => self.evaluate(*lhs) * self.evaluate(*rhs),
-                Token::Slash => self.evaluate(*lhs) / self.evaluate(*rhs),
+                Token::Div   => self.evaluate(*lhs) / self.evaluate(*rhs),
                 _ => panic!("Error: expected arithmetic operator and found '{:?}'.", op),
             },
             AST::UnaryOp{op, rhs} => match op {
@@ -370,7 +474,7 @@ impl Interpreter {
                 Token::Minus => -self.evaluate(*rhs),
                 _ => panic!("Error: expected a '+' or '-' and found '{:?}'.", op),
             },
-            AST::Var(name) => match self.global_scope.get(&name) {
+            AST::Variable(name) => match self.global_scope.get(&name) {
                 Some(val) => *val,
                 None => panic!("Error: the variable {} is undefined", name),
             },

@@ -2,8 +2,8 @@ BEGIN
     BEGIN
         number := 2;
         a := number;
-        b := 10 * a + 10 * number / 4;
-        c := a - - b
+        b := 10 * a + 10 * number DIV 4;
+        _C := a - - b
     END;
     x := 11;
 END.
